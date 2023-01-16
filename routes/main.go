@@ -14,5 +14,4 @@ func Run() {
 func getRoutes() {
 	apiRoutes := router.Group("/api")
 	addUserRoutes(apiRoutes)
-	addPostRoutes(apiRoutes)
 }

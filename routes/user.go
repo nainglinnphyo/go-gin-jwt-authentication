@@ -1,7 +1,7 @@
 package routes
 
 import (
-	"net/http"
+	"rest-api/controllers"
 
 	"github.com/gin-gonic/gin"
 )
@@ -9,13 +9,6 @@ import (
 func addUserRoutes(rg *gin.RouterGroup) {
 	users := rg.Group("/users")
 
-	users.GET("/", func(c *gin.Context) {
-		c.JSON(http.StatusOK, "users")
-	})
-	users.GET("/comments", func(c *gin.Context) {
-		c.JSON(http.StatusOK, "users comments")
-	})
-	users.GET("/pictures", func(c *gin.Context) {
-		c.JSON(http.StatusOK, "users pictures")
-	})
+	users.POST("/create", controllers.CreateUser())
+	users.GET("/", controllers.GetAllUsers())
 }

@@ -7,6 +7,6 @@ import (
 
 func main() {
 	// Our server will live in the routes package
-	config.ConnectDatabase()
+	config.ConnectDB()
 	routes.Run()
 }

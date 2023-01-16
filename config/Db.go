@@ -1,27 +1,41 @@
 package config
 
 import (
-	"rest-api/models"
+	"context"
+	"fmt"
+	"log"
+	"time"
 
-	"gorm.io/driver/sqlite"
-	_ "gorm.io/driver/sqlite"
-	"gorm.io/gorm"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-var DB *gorm.DB
-
-func ConnectDatabase() {
-
-	database, err := gorm.Open(sqlite.Open("test.db"), &gorm.Config{})
-
+func ConnectDB() *mongo.Client {
+	client, err := mongo.NewClient(options.Client().ApplyURI(EnvMongoURI()))
 	if err != nil {
-		panic("Failed to connect to database!")
+		log.Fatal(err)
 	}
 
-	err = database.AutoMigrate(&models.User{}, &models.Post{})
+	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	err = client.Connect(ctx)
 	if err != nil {
-		return
+		log.Fatal(err)
 	}
 
-	DB = database
+	//ping the database
+	err = client.Ping(ctx, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Connected to MongoDB")
+	return client
+}
+
+// Client instance
+var DB *mongo.Client = ConnectDB()
+
+// getting database collections
+func GetCollection(client *mongo.Client, collectionName string) *mongo.Collection {
+	collection := client.Database("golandrestapi").Collection(collectionName)
+	return collection
 }
