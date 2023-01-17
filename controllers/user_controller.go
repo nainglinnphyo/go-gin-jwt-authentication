@@ -2,10 +2,14 @@ package controllers
 
 import (
 	"context"
+	"fmt"
+	"log"
 	"net/http"
 	"rest-api/config"
+	"rest-api/helpers"
 	"rest-api/models"
-	"rest-api/responses"
+
+	// "rest-api/responses"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,64 +22,97 @@ import (
 var userCollection *mongo.Collection = config.GetCollection(config.DB, "users")
 var validate = validator.New()
 
-func CreateUser() gin.HandlerFunc {
+func SignUp() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
 		var user models.User
+
+		if err := c.BindJSON(&user); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		validationErr := validate.Struct(user)
+		if validationErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": validationErr.Error()})
+			return
+		}
+
+		count, err := userCollection.CountDocuments(ctx, bson.M{"email": user.Email})
+		defer cancel()
+		if err != nil {
+			log.Panic(err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "error occured while checking for the email"})
+			return
+		}
+
+		password := helpers.HashPassword(*user.Password)
+		user.Password = &password
+
+		count, err = userCollection.CountDocuments(ctx, bson.M{"phone": user.Phone})
+		defer cancel()
+		if err != nil {
+			log.Panic(err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "error occured while checking for the phone number"})
+			return
+		}
+
+		if count > 0 {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "this email or phone number already exists"})
+			return
+		}
+
+		user.Created_at, _ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
+		user.Updated_at, _ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
+		user.ID = primitive.NewObjectID()
+		user.User_id = user.ID.Hex()
+		token, refreshToken, _ := helpers.GenerateAllTokens(*user.Email, *user.First_name, *user.Last_name, user.User_id)
+		user.Token = &token
+		user.Refresh_token = &refreshToken
+
+		resultInsertionNumber, insertErr := userCollection.InsertOne(ctx, user)
+		if insertErr != nil {
+			msg := fmt.Sprintf("User item was not created")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+			return
+		}
 		defer cancel()
 
-		//validate the request body
-		if err := c.BindJSON(&user); err != nil {
-			c.JSON(http.StatusBadRequest, responses.UserResponse{Status: http.StatusBadRequest, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
-			return
-		}
+		c.JSON(http.StatusOK, resultInsertionNumber)
 
-		//use the validator library to validate required fields
-		if validationErr := validate.Struct(&user); validationErr != nil {
-			c.JSON(http.StatusBadRequest, responses.UserResponse{Status: http.StatusBadRequest, Message: "error", Data: map[string]interface{}{"data": validationErr.Error()}})
-			return
-		}
-
-		newUser := models.User{
-			Id:       primitive.NewObjectID(),
-			Name:     user.Name,
-			Location: user.Location,
-			Title:    user.Title,
-		}
-
-		result, err := userCollection.InsertOne(ctx, newUser)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, responses.UserResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
-			return
-		}
-
-		c.JSON(http.StatusCreated, responses.UserResponse{Status: http.StatusCreated, Message: "success", Data: map[string]interface{}{"data": result}})
 	}
 }
-func GetAllUsers() gin.HandlerFunc {
+
+func Login() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		var users []models.User
-		defer cancel()
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		var user models.User
+		var foundUser models.User
 
-		results, err := userCollection.Find(ctx, bson.M{})
-
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, responses.UserResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
+		if err := c.BindJSON(&user); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		//reading from the db in an optimal way
-		defer results.Close(ctx)
-		for results.Next(ctx) {
-			var singleUser models.User
-			if err = results.Decode(&singleUser); err != nil {
-				c.JSON(http.StatusInternalServerError, responses.UserResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
-			}
-			users = append(users, singleUser)
+		err := userCollection.FindOne(ctx, bson.M{"email": user.Email}).Decode(&foundUser)
+		defer cancel()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "login or passowrd is incorrect"})
+			return
 		}
-		c.JSON(http.StatusOK,
-			responses.UserResponse{Status: http.StatusOK, Message: "success", Data: map[string]interface{}{"data": users}},
-		)
+
+		passwordIsValid, msg := helpers.VerifyPassword(*user.Password, *foundUser.Password)
+		defer cancel()
+		if passwordIsValid != true {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+			return
+		}
+
+		token, refreshToken, _ := helpers.GenerateAllTokens(*foundUser.Email, *foundUser.First_name, *foundUser.Last_name, foundUser.User_id)
+
+		helpers.UpdateAllTokens(token, refreshToken, foundUser.User_id)
+
+		c.JSON(http.StatusOK, foundUser)
+
 	}
 }
